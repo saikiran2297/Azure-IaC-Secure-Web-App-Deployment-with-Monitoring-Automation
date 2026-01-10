@@ -11,6 +11,6 @@ resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 }
 
 output workspaceId string = law.id
-// shared key is needed by VM extension; safe enough for demo, but keep params secure
+output workspaceCustomerId string = law.properties.customerId
+// NOTE: This is used for the legacy MMA agent extension; it triggers a linter warning but compiles and works.
 output workspaceSharedKey string = listKeys(law.id, law.apiVersion).primarySharedKey
-
