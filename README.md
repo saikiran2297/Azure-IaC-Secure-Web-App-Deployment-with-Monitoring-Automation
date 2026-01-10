@@ -1,30 +1,25 @@
-# Secure Web App + Azure SQL (Private) + Load Balancer + VMSS Autoscaling (Bicep)
+# Secure Web App + Azure SQL (Private) with Load Balancer + VMSS Autoscaling (Bicep)
 
-## Overview
-This project deploys a secure, scalable web tier behind an Azure Standard Load Balancer with autoscaling, and a private Azure SQL Database accessible only via Private Endpoint.
+This project deploys:
+- VNet with subnets:
+  - snet-web: 10.10.1.0/24
+  - snet-data: 10.10.2.0/24
+  - AzureBastionSubnet: 10.10.10.0/27
+- Standard Public Load Balancer (HTTP/80)
+- Windows VM Scale Set (IIS) behind the LB + autoscale rules
+- Azure SQL Server + DB with Public Access Disabled
+- SQL Private Endpoint in snet-data + Private DNS Zone link
+- Azure Bastion for secure admin access (no public RDP)
+- Log Analytics workspace + VM monitoring agent
 
-## Architecture
-- VNet: 10.10.0.0/16
-- Subnets:
-  - snet-web: 10.10.1.0/24 (VMSS)
-  - snet-data: 10.10.2.0/24 (Private Endpoint)
-  - AzureBastionSubnet: 10.10.10.0/27 (Bastion)
-- Public Standard Load Balancer → VMSS (IIS)
-- Azure SQL Server: Public access disabled + Private Endpoint + Private DNS
-- Autoscale: CPU-based scale out/in rules
-
-## Security Controls
-- No public IPs on VM instances (access via Bastion)
-- SQL public network access disabled
-- Private DNS zone for SQL private link
-
-## Deploy (Azure CLI)
-```bash
-az login
-az account set --subscription "<SUBSCRIPTION_ID>"
-
-RG="rg-secure-web-lb-autoscale"
-LOC="uksouth"
-
-az group create -n $RG -l $LOC
-az deployment group create -n main -g $RG -f infra/main.bicep -p infra/main.parameters.json
+## Architecture (Mermaid)
+```mermaid
+flowchart LR
+  Internet((Internet)) --> LB[Public Load Balancer :80]
+  LB --> VMSS[VM Scale Set (IIS)]
+  VMSS -->|Private DNS| SQL[(Azure SQL Database)]
+  VMSS --- VNET[VNet 10.10.0.0/16]
+  VNET --> WEB[snet-web 10.10.1.0/24]
+  VNET --> DATA[snet-data 10.10.2.0/24]
+  VNET --> BAS[AzureBastionSubnet 10.10.10.0/27]
+  Bastion[Azure Bastion] --> VMSS
