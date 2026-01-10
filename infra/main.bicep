@@ -2,11 +2,11 @@ targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
 param projectName string = 'secureweb'
+
 param adminUsername string
 @secure()
 param adminPassword string
 
-// SQL admin (can be same as VM admin, but kept separate for clarity)
 param sqlAdminUsername string = adminUsername
 @secure()
 param sqlAdminPassword string = adminPassword
@@ -56,9 +56,8 @@ module compute 'modules/compute.bicep' = {
     instanceCount: instanceCount
 
     snetWebId: network.outputs.snetWebId
-    lbFrontendPublicIpId: network.outputs.lbPublicIpId
 
-    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    logAnalyticsWorkspaceCustomerId: monitoring.outputs.workspaceCustomerId
     logAnalyticsWorkspaceKey: monitoring.outputs.workspaceSharedKey
 
     sqlPrivateFqdn: sql.outputs.sqlPrivateFqdn
@@ -69,3 +68,4 @@ output websitePublicIp string = network.outputs.lbPublicIpAddress
 output sqlServerName string = sql.outputs.sqlServerName
 output sqlDatabaseName string = sql.outputs.sqlDatabaseName
 output bastionName string = network.outputs.bastionName
+
