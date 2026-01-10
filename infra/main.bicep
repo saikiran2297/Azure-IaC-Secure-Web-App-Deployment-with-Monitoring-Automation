@@ -6,8 +6,24 @@ param adminUsername string
 @secure()
 param adminPassword string
 
+// SQL admin (can be same as VM admin, but kept separate for clarity)
+param sqlAdminUsername string = adminUsername
+@secure()
+param sqlAdminPassword string = adminPassword
+
+param vmSku string = 'Standard_DS2_v2'
+param instanceCount int = 2
+
 module network 'modules/network.bicep' = {
-  name: 'network'
+  name: '${projectName}-network'
+  params: {
+    location: location
+    projectName: projectName
+  }
+}
+
+module monitoring 'modules/monitoring.bicep' = {
+  name: '${projectName}-monitoring'
   params: {
     location: location
     projectName: projectName
@@ -15,36 +31,41 @@ module network 'modules/network.bicep' = {
 }
 
 module sql 'modules/sql.bicep' = {
-  name: 'sql'
+  name: '${projectName}-sql'
   params: {
     location: location
     projectName: projectName
+    sqlAdminUsername: sqlAdminUsername
+    sqlAdminPassword: sqlAdminPassword
+
     vnetId: network.outputs.vnetId
     snetDataId: network.outputs.snetDataId
   }
 }
 
 module compute 'modules/compute.bicep' = {
-  name: 'compute'
+  name: '${projectName}-compute'
   params: {
     location: location
     projectName: projectName
+
     adminUsername: adminUsername
     adminPassword: adminPassword
+
+    vmSku: vmSku
+    instanceCount: instanceCount
+
     snetWebId: network.outputs.snetWebId
     lbFrontendPublicIpId: network.outputs.lbPublicIpId
+
+    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    logAnalyticsWorkspaceKey: monitoring.outputs.workspaceSharedKey
+
+    sqlPrivateFqdn: sql.outputs.sqlPrivateFqdn
   }
 }
 
-module monitoring 'modules/monitoring.bicep' = {
-  name: 'monitoring'
-  params: {
-    location: location
-    projectName: projectName
-    vmssId: compute.outputs.vmssId
-  }
-}
-
-output loadBalancerPublicIp string = network.outputs.lbPublicIp
+output websitePublicIp string = network.outputs.lbPublicIpAddress
 output sqlServerName string = sql.outputs.sqlServerName
 output sqlDatabaseName string = sql.outputs.sqlDatabaseName
+output bastionName string = network.outputs.bastionName
