@@ -1,4 +1,3 @@
-
 param location string
 param projectName string
 
@@ -10,32 +9,36 @@ param vmSku string
 param instanceCount int
 
 param snetWebId string
-param lbFrontendPublicIpId string
 
-param logAnalyticsWorkspaceId string
+param logAnalyticsWorkspaceCustomerId string
 @secure()
 param logAnalyticsWorkspaceKey string
 
-// Used to render a page proving “private SQL FQDN” exists (DNS should resolve privately)
 param sqlPrivateFqdn string
 
 var vmssName = '${projectName}-vmss'
-var lbName = '${projectName}-lb'
 
+// Must match the LB name in network.bicep
+var lbName = '${projectName}-lb'
+var beName = 'be'
+
+// Reference existing LB created by network module
 resource lb 'Microsoft.Network/loadBalancers@2023-11-01' existing = {
   name: lbName
 }
 
-var backendPoolId = resourceId('Microsoft.Network/loadBalancers/backendAddressPools', lb.name, 'be')
+var backendPoolId = resourceId('Microsoft.Network/loadBalancers/backendAddressPools', lbName, beName)
 
-// VMSS with IIS installed via Custom Script Extension (simple demo)
+// Safe, compile-friendly script (no broken quoting)
+var cmd = 'powershell -ExecutionPolicy Bypass -Command "Install-WindowsFeature Web-Server; $fqdn=''''${sqlPrivateFqdn}''''; $html=''<!doctype html><html><body><h1>${projectName} - VMSS behind Load Balancer</h1><p>Private SQL FQDN: '' + $fqdn + ''</p></body></html>''; Set-Content -Path C:\\inetpub\\wwwroot\\index.html -Value $html"'
+
 resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2023-09-01' = {
   name: vmssName
   location: location
   sku: {
     name: vmSku
-    capacity: instanceCount
     tier: 'Standard'
+    capacity: instanceCount
   }
   properties: {
     upgradePolicy: {
@@ -83,9 +86,7 @@ resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2023-09-01' = {
         ]
       }
       diagnosticsProfile: {
-        bootDiagnostics: {
-          enabled: true
-        }
+        bootDiagnostics: { enabled: true }
       }
       extensionProfile: {
         extensions: [
@@ -97,7 +98,7 @@ resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2023-09-01' = {
               typeHandlerVersion: '1.10'
               autoUpgradeMinorVersion: true
               settings: {
-                commandToExecute: 'powershell -ExecutionPolicy Unrestricted -Command "Install-WindowsFeature -name Web-Server; $html = @''<html><body><h1>${projectName} - VMSS behind Load Balancer</h1><p>Private SQL FQDN: ${sqlPrivateFqdn}</p></body></html>''@; Set-Content -Path C:\\inetpub\\wwwroot\\index.html -Value $html"'
+                commandToExecute: cmd
               }
             }
           }
@@ -109,7 +110,7 @@ resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2023-09-01' = {
               typeHandlerVersion: '1.0'
               autoUpgradeMinorVersion: true
               settings: {
-                workspaceId: reference(logAnalyticsWorkspaceId, '2023-09-01').customerId
+                workspaceId: logAnalyticsWorkspaceCustomerId
               }
               protectedSettings: {
                 workspaceKey: logAnalyticsWorkspaceKey
@@ -122,7 +123,7 @@ resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2023-09-01' = {
   }
 }
 
-// Autoscale: scale out when CPU > 70%, scale in when CPU < 30%
+// Autoscale on CPU
 resource autoscale 'Microsoft.Insights/autoscaleSettings@2022-10-01' = {
   name: '${projectName}-vmss-autoscale'
   location: location
@@ -181,3 +182,4 @@ resource autoscale 'Microsoft.Insights/autoscaleSettings@2022-10-01' = {
 }
 
 output vmssId string = vmss.id
+
