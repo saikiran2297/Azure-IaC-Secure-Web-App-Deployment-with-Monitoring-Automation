@@ -1,88 +1,70 @@
+
 param location string
 param projectName string
+
 param adminUsername string
 @secure()
 param adminPassword string
+
+param vmSku string
+param instanceCount int
+
 param snetWebId string
 param lbFrontendPublicIpId string
 
-var lbName = 'lb-${projectName}'
-var vmssName = 'vmss-${projectName}'
+param logAnalyticsWorkspaceId string
+@secure()
+param logAnalyticsWorkspaceKey string
 
-resource lb 'Microsoft.Network/loadBalancers@2023-11-01' = {
+// Used to render a page proving “private SQL FQDN” exists (DNS should resolve privately)
+param sqlPrivateFqdn string
+
+var vmssName = '${projectName}-vmss'
+var lbName = '${projectName}-lb'
+
+resource lb 'Microsoft.Network/loadBalancers@2023-11-01' existing = {
   name: lbName
-  location: location
-  sku: { name: 'Standard' }
-  properties: {
-    frontendIPConfigurations: [
-      {
-        name: 'fe'
-        properties: {
-          publicIPAddress: { id: lbFrontendPublicIpId }
-        }
-      }
-    ]
-    backendAddressPools: [
-      { name: 'be' }
-    ]
-    probes: [
-      {
-        name: 'httpProbe'
-        properties: {
-          protocol: 'Tcp'
-          port: 80
-          intervalInSeconds: 5
-          numberOfProbes: 2
-        }
-      }
-    ]
-    loadBalancingRules: [
-      {
-        name: 'httpRule'
-        properties: {
-          protocol: 'Tcp'
-          frontendPort: 80
-          backendPort: 80
-          enableFloatingIP: false
-          idleTimeoutInMinutes: 4
-          frontendIPConfiguration: { id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', lbName, 'fe') }
-          backendAddressPool: { id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', lbName, 'be') }
-          probe: { id: resourceId('Microsoft.Network/loadBalancers/probes', lbName, 'httpProbe') }
-        }
-      }
-    ]
-  }
 }
 
-resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2024-03-01' = {
+var backendPoolId = resourceId('Microsoft.Network/loadBalancers/backendAddressPools', lb.name, 'be')
+
+// VMSS with IIS installed via Custom Script Extension (simple demo)
+resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2023-09-01' = {
   name: vmssName
   location: location
   sku: {
-    name: 'Standard_D2s_v5'
+    name: vmSku
+    capacity: instanceCount
     tier: 'Standard'
-    capacity: 2
   }
   properties: {
-    upgradePolicy: { mode: 'Automatic' }
+    upgradePolicy: {
+      mode: 'Automatic'
+    }
     virtualMachineProfile: {
       storageProfile: {
         imageReference: {
           publisher: 'MicrosoftWindowsServer'
           offer: 'WindowsServer'
-          sku: '2022-datacenter-g2'
+          sku: '2022-datacenter-azure-edition'
           version: 'latest'
         }
-        osDisk: { createOption: 'FromImage' }
+        osDisk: {
+          createOption: 'FromImage'
+          managedDisk: {
+            storageAccountType: 'StandardSSD_LRS'
+          }
+        }
       }
       osProfile: {
-        computerNamePrefix: 'web'
+        computerNamePrefix: '${projectName}-web'
         adminUsername: adminUsername
         adminPassword: adminPassword
       }
       networkProfile: {
         networkInterfaceConfigurations: [
           {
-            name: 'nic'
+            name: '${vmssName}-nic'
             properties: {
               primary: true
               ipConfigurations: [
@@ -91,7 +73,7 @@ resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2024-03-01' = {
                   properties: {
                     subnet: { id: snetWebId }
                     loadBalancerBackendAddressPools: [
-                      { id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', lbName, 'be') }
+                      { id: backendPoolId }
                     ]
                   }
                 }
@@ -100,23 +82,101 @@ resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2024-03-01' = {
           }
         ]
       }
+      diagnosticsProfile: {
+        bootDiagnostics: {
+          enabled: true
+        }
+      }
       extensionProfile: {
         extensions: [
           {
-            name: 'iisInstall'
+            name: 'IISSetup'
             properties: {
               publisher: 'Microsoft.Compute'
               type: 'CustomScriptExtension'
               typeHandlerVersion: '1.10'
               autoUpgradeMinorVersion: true
               settings: {
-                commandToExecute: 'powershell -ExecutionPolicy Unrestricted -Command "Install-WindowsFeature Web-Server; Set-Content -Path C:\\inetpub\\wwwroot\\index.html -Value ''<h1>Secure Web App behind Azure Load Balancer</h1><p>Deployed via Bicep</p>''"'
+                commandToExecute: 'powershell -ExecutionPolicy Unrestricted -Command "Install-WindowsFeature -name Web-Server; $html = @''<html><body><h1>${projectName} - VMSS behind Load Balancer</h1><p>Private SQL FQDN: ${sqlPrivateFqdn}</p></body></html>''@; Set-Content -Path C:\\inetpub\\wwwroot\\index.html -Value $html"'
+              }
+            }
+          }
+          {
+            name: 'MicrosoftMonitoringAgent'
+            properties: {
+              publisher: 'Microsoft.EnterpriseCloud.Monitoring'
+              type: 'MicrosoftMonitoringAgent'
+              typeHandlerVersion: '1.0'
+              autoUpgradeMinorVersion: true
+              settings: {
+                workspaceId: reference(logAnalyticsWorkspaceId, '2023-09-01').customerId
+              }
+              protectedSettings: {
+                workspaceKey: logAnalyticsWorkspaceKey
               }
             }
           }
         ]
       }
     }
+  }
+}
+
+// Autoscale: scale out when CPU > 70%, scale in when CPU < 30%
+resource autoscale 'Microsoft.Insights/autoscaleSettings@2022-10-01' = {
+  name: '${projectName}-vmss-autoscale'
+  location: location
+  properties: {
+    enabled: true
+    targetResourceUri: vmss.id
+    profiles: [
+      {
+        name: 'cpu-profile'
+        capacity: {
+          minimum: '2'
+          maximum: '5'
+          default: string(instanceCount)
+        }
+        rules: [
+          {
+            metricTrigger: {
+              metricName: 'Percentage CPU'
+              metricResourceUri: vmss.id
+              timeGrain: 'PT1M'
+              statistic: 'Average'
+              timeWindow: 'PT5M'
+              timeAggregation: 'Average'
+              operator: 'GreaterThan'
+              threshold: 70
+            }
+            scaleAction: {
+              direction: 'Increase'
+              type: 'ChangeCount'
+              value: '1'
+              cooldown: 'PT5M'
+            }
+          }
+          {
+            metricTrigger: {
+              metricName: 'Percentage CPU'
+              metricResourceUri: vmss.id
+              timeGrain: 'PT1M'
+              statistic: 'Average'
+              timeWindow: 'PT10M'
+              timeAggregation: 'Average'
+              operator: 'LessThan'
+              threshold: 30
+            }
+            scaleAction: {
+              direction: 'Decrease'
+              type: 'ChangeCount'
+              value: '1'
+              cooldown: 'PT10M'
+            }
+          }
+        ]
+      }
+    ]
   }
 }
 
