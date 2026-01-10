@@ -2,8 +2,14 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
+    "location": { "value": "uksouth" },
     "projectName": { "value": "secureweb" },
     "adminUsername": { "value": "azureadmin" },
-    "adminPassword": { "value": "REPLACE_WITH_STRONG_PASSWORD" }
+    "adminPassword": { "value": "REPLACE_WITH_STRONG_PASSWORD" },
+    "sqlAdminUsername": { "value": "sqladmin" },
+    "sqlAdminPassword": { "value": "REPLACE_WITH_STRONG_PASSWORD" },
+    "vmSku": { "value": "Standard_DS2_v2" },
+    "instanceCount": { "value": 2 }
   }
 }
+
