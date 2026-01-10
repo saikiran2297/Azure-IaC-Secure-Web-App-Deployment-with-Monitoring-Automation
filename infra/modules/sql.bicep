@@ -1,5 +1,6 @@
 param location string
 param projectName string
+
 param sqlAdminUsername string
 @secure()
 param sqlAdminPassword string
@@ -7,17 +8,21 @@ param sqlAdminPassword string
 param vnetId string
 param snetDataId string
 
+var sqlHostSuffix = environment().suffixes.sqlServerHostname // e.g. database.windows.net
+var privateZoneName = 'privatelink.${sqlHostSuffix}'
+
 var sqlServerName = toLower('${projectName}sql${uniqueString(resourceGroup().id)}')
 var dbName = '${projectName}-db'
 
 // Private DNS zone for SQL
 resource sqlPrivateDns 'Microsoft.Network/privateDnsZones@2020-06-01' = {
-  name: 'privatelink.database.windows.net'
+  name: privateZoneName
   location: 'global'
 }
 
 resource dnsVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  name: '${sqlPrivateDns.name}/${projectName}-dnslink'
+  name: '${projectName}-dnslink'
+  parent: sqlPrivateDns
   location: 'global'
   properties: {
     virtualNetwork: { id: vnetId }
@@ -38,7 +43,8 @@ resource sqlServer 'Microsoft.Sql/servers@2023-05-01-preview' = {
 }
 
 resource sqlDb 'Microsoft.Sql/servers/databases@2023-05-01-preview' = {
-  name: '${sqlServer.name}/${dbName}'
+  name: dbName
+  parent: sqlServer
   location: location
   sku: {
     name: 'Basic'
@@ -67,9 +73,10 @@ resource pe 'Microsoft.Network/privateEndpoints@2023-11-01' = {
   }
 }
 
-// DNS A-record is created by a zone group
+// DNS zone group attaches the private endpoint to the private DNS zone
 resource zoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-11-01' = {
-  name: '${pe.name}/sql-zonegroup'
+  name: 'sql-zonegroup'
+  parent: pe
   properties: {
     privateDnsZoneConfigs: [
       {
@@ -84,5 +91,4 @@ resource zoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023
 
 output sqlServerName string = sqlServer.name
 output sqlDatabaseName string = dbName
-output sqlPrivateFqdn string = '${sqlServer.name}.database.windows.net'
-
+output sqlPrivateFqdn string = '${sqlServer.name}.${sqlHostSuffix}'
